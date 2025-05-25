@@ -97,14 +97,14 @@ def detect_face_center(image: Image.Image):
     
     if aspect_ratio > 1.5:
         # Very tall image (full body or long portrait)
-        # Face is likely in the top 25% of the image
+        # Face is likely in the top 20% of the image
         face_center_x = width // 2
-        face_center_y = int(height * 0.15)  # Much higher up for full body shots
+        face_center_y = int(height * 0.20)  # 20% from top for full body shots
     elif aspect_ratio > 1.2:
         # Portrait image (shoulders and up)
-        # Face is in the top 30-40% of image
+        # Face is in the top 30% of image
         face_center_x = width // 2
-        face_center_y = int(height * 0.25)  # Higher up for portraits
+        face_center_y = int(height * 0.30)  # 30% from top for portraits
     elif aspect_ratio > 0.8:
         # Square-ish image
         # Face is usually in upper center
@@ -112,20 +112,35 @@ def detect_face_center(image: Image.Image):
         face_center_y = int(height * 0.35)
     else:
         # Landscape image
-        # Face could be anywhere, assume center-left or center-right
+        # Face could be anywhere, assume center
         face_center_x = width // 2
         face_center_y = int(height * 0.4)
     
     # Additional logic: for very tall images, assume it's a full body shot
     # and the face is in the very top portion
     if height > width * 2:
-        face_center_y = int(height * 0.12)  # Very top for full body shots
+        face_center_y = int(height * 0.15)  # Very top for full body shots
     
     return face_center_x, face_center_y
 
+def calculate_max_radius(face_center_x, face_center_y, width, height):
+    """
+    Calculate maximum possible radius based on distance to all 4 edges
+    """
+    # Distance from face center to each edge
+    distance_to_left = face_center_x
+    distance_to_right = width - face_center_x
+    distance_to_top = face_center_y
+    distance_to_bottom = height - face_center_y
+    
+    # Maximum radius is the minimum of all 4 distances
+    max_radius = min(distance_to_left, distance_to_right, distance_to_top, distance_to_bottom)
+    
+    return max_radius
+
 def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya") -> Image.Image:
     """
-    Add LinkedIn-style face frame with improved face detection
+    Add LinkedIn-style face frame with precise radius calculation
     """
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
@@ -133,43 +148,25 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     img_with_watermark = image.copy()
     width, height = img_with_watermark.size
     
-    # Detect face center with improved logic
+    # Detect face center
     face_center_x, face_center_y = detect_face_center(image)
     
-    # Calculate aspect ratio for better radius calculation
-    aspect_ratio = height / width
+    # Calculate maximum possible radius based on distance to edges
+    max_radius = calculate_max_radius(face_center_x, face_center_y, width, height)
     
-    # Smart radius calculation based on image dimensions and type
-    if aspect_ratio > 1.5:
-        # Full body shot - smaller circle relative to image
-        base_radius = min(width, height) // 8
-    elif aspect_ratio > 1.2:
-        # Portrait shot - medium circle
-        base_radius = min(width, height) // 6
-    else:
-        # Square or landscape - larger circle
-        base_radius = min(width, height) // 5
+    # Use a percentage of max radius for the circles
+    # Outer radius: 80% of max possible (leaves 20% margin)
+    # Inner radius: 60% of max possible 
+    outer_radius = int(max_radius * 0.8)
+    inner_radius = int(max_radius * 0.6)
     
-    # Maximum possible radius based on face center position
-    max_radius_x = min(face_center_x, width - face_center_x)
-    max_radius_y = min(face_center_y, height - face_center_y)
-    max_radius = min(max_radius_x, max_radius_y)
+    # Ensure minimum readable sizes
+    outer_radius = max(60, outer_radius)  # Minimum 60px
+    inner_radius = max(40, inner_radius)  # Minimum 40px
     
-    # Use smaller of calculated radius and max possible radius
-    inner_radius = min(base_radius, int(max_radius * 0.7))
-    outer_radius = min(base_radius + 30, int(max_radius * 0.9))
-    
-    # Ensure minimum sizes
-    inner_radius = max(40, inner_radius)
-    outer_radius = max(inner_radius + 20, outer_radius)
-    
-    # If circle would be too big for the detected face position, reduce it
-    if face_center_y - outer_radius < 0:
-        # Circle would go above image, reduce size
-        max_allowed_radius = face_center_y - 10
-        if max_allowed_radius > 30:
-            outer_radius = max_allowed_radius
-            inner_radius = max(30, outer_radius - 25)
+    # Ensure there's enough space for text between circles
+    if outer_radius - inner_radius < 20:
+        inner_radius = max(20, outer_radius - 25)
     
     # Create overlay
     overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -179,6 +176,7 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     linkedin_green = (25, 135, 84)
     
     # Draw the ring between inner and outer circles
+    # First draw outer circle (filled)
     outer_bbox = [
         face_center_x - outer_radius,
         face_center_y - outer_radius,
@@ -187,18 +185,18 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     ]
     draw.ellipse(outer_bbox, fill=linkedin_green + (200,))
     
-    # Inner transparent circle
+    # Then draw inner circle (transparent) to create the ring effect
     inner_bbox = [
         face_center_x - inner_radius,
         face_center_y - inner_radius,
         face_center_x + inner_radius,
         face_center_y + inner_radius
     ]
-    draw.ellipse(inner_bbox, fill=(0, 0, 0, 0))
+    draw.ellipse(inner_bbox, fill=(0, 0, 0, 0))  # Transparent inner circle
     
-    # Font setup
+    # Font setup for curved text
     ring_width = outer_radius - inner_radius
-    font_size = max(6, min(14, ring_width // 2))
+    font_size = max(8, min(16, ring_width // 2))  # Font size based on ring width
     
     try:
         font_paths = [
@@ -221,42 +219,44 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     except:
         font = ImageFont.load_default()
     
-    # Add curved text
-    text_radius = (inner_radius + outer_radius) // 2
+    # Add curved text between the circles
+    text_radius = (inner_radius + outer_radius) // 2  # Middle of the ring
     
-    # Format text
+    # Format text like LinkedIn
     if "support" in text.lower() and "amit" in text.lower():
         display_text = "#I SUPPORT AMIT MAURYA"
     else:
         display_text = f"#{text.upper()}"
     
-    # Text positioning
+    # Calculate text positioning around the circle
     text_length = len(display_text)
-    angle_per_char = (2 * math.pi * 0.75) / text_length
-    start_angle = -math.pi * 0.375
+    angle_per_char = (2 * math.pi * 0.75) / text_length  # Use 75% of circle
+    start_angle = -math.pi * 0.375  # Start from left side
     
-    # Draw curved text
+    # Draw each character along the curved path
     for i, char in enumerate(display_text):
         angle = start_angle + i * angle_per_char
         
+        # Calculate position
         x = face_center_x + text_radius * math.cos(angle)
         y = face_center_y + text_radius * math.sin(angle)
         
-        # Only draw if within bounds
-        if 0 <= x <= width and 0 <= y <= height:
-            try:
-                char_bbox = draw.textbbox((0, 0), char, font=font)
-                char_width = char_bbox[2] - char_bbox[0]
-                char_height = char_bbox[3] - char_bbox[1]
-                
-                char_x = x - char_width // 2
-                char_y = y - char_height // 2
-                
-                draw.text((char_x, char_y), char, fill='white', font=font)
-            except:
-                draw.text((x-font_size//4, y-font_size//4), char, fill='white', font=font)
+        # Draw character (should always be within bounds due to our radius calculation)
+        try:
+            # Try to center the character
+            char_bbox = draw.textbbox((0, 0), char, font=font)
+            char_width = char_bbox[2] - char_bbox[0]
+            char_height = char_bbox[3] - char_bbox[1]
+            
+            char_x = x - char_width // 2
+            char_y = y - char_height // 2
+            
+            draw.text((char_x, char_y), char, fill='white', font=font)
+        except:
+            # Fallback positioning
+            draw.text((x-font_size//4, y-font_size//4), char, fill='white', font=font)
     
-    # Apply overlay
+    # Apply the overlay
     img_with_watermark = Image.alpha_composite(img_with_watermark, overlay)
     return img_with_watermark
 
