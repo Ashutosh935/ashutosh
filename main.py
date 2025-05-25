@@ -88,19 +88,24 @@ def add_circular_watermark(image: Image.Image, text: str = "I support AMIT Maury
 
 def detect_face_center(image: Image.Image):
     """
-    Simple face detection - finds the center area of the image as face center
-    For better results, you could integrate OpenCV face detection
+    Better face detection based on image aspect ratio
     """
     width, height = image.size
-    # Simple assumption: face is in the center-upper area of image
-    face_center_x = width // 2
-    face_center_y = int(height * 0.4)  # Slightly above center for typical selfies
+    
+    # For portrait images (height > width), face is usually in upper-center
+    if height > width:
+        face_center_x = width // 2
+        face_center_y = int(height * 0.35)  # 35% from top for portrait
+    else:
+        # For landscape or square images
+        face_center_x = width // 2
+        face_center_y = int(height * 0.45)  # 45% from top for landscape
     
     return face_center_x, face_center_y
 
 def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya") -> Image.Image:
     """
-    Add LinkedIn-style face frame with curved text between two circles
+    Add LinkedIn-style face frame with smart radius calculation
     """
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
@@ -111,9 +116,21 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     # Detect face center
     face_center_x, face_center_y = detect_face_center(image)
     
-    # Calculate circle radii based on image size
-    inner_radius = min(width, height) // 4  # Inner circle around face
-    outer_radius = inner_radius + 40        # Outer circle for text band
+    # Smart radius calculation based on image dimensions
+    # Ensure circle doesn't go beyond image boundaries
+    
+    # Maximum possible radius based on face center position
+    max_radius_x = min(face_center_x, width - face_center_x)
+    max_radius_y = min(face_center_y, height - face_center_y)
+    max_radius = min(max_radius_x, max_radius_y)
+    
+    # Use a percentage of the maximum radius for inner circle
+    inner_radius = int(max_radius * 0.6)  # 60% of max possible
+    outer_radius = int(max_radius * 0.8)  # 80% of max possible
+    
+    # Ensure minimum and maximum sizes
+    inner_radius = max(50, min(inner_radius, 150))  # Between 50-150px
+    outer_radius = max(inner_radius + 20, min(outer_radius, 190))  # At least 20px bigger
     
     # Create overlay
     overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -142,8 +159,10 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     draw.ellipse(inner_bbox, fill=(0, 0, 0, 0))  # Transparent inner circle
     
     # Font setup for curved text
+    ring_width = outer_radius - inner_radius
+    font_size = max(8, min(16, ring_width // 2))  # Font size based on ring width
+    
     try:
-        font_size = max(12, (outer_radius - inner_radius) // 3)
         font_paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -162,7 +181,6 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
             font = ImageFont.load_default()
             
     except:
-        font_size = 12
         font = ImageFont.load_default()
     
     # Add curved text between the circles
@@ -176,8 +194,11 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     
     # Calculate text positioning around the circle
     text_length = len(display_text)
-    angle_per_char = (2 * math.pi * 0.8) / text_length  # Use 80% of circle
-    start_angle = -math.pi * 0.4  # Start from left side
+    # Adjust text spacing based on circle size
+    circle_circumference = 2 * math.pi * text_radius
+    available_arc = circle_circumference * 0.75  # Use 75% of circle
+    angle_per_char = (2 * math.pi * 0.75) / text_length
+    start_angle = -math.pi * 0.375  # Start from left side
     
     # Draw each character along the curved path
     for i, char in enumerate(display_text):
@@ -187,24 +208,21 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
         x = face_center_x + text_radius * math.cos(angle)
         y = face_center_y + text_radius * math.sin(angle)
         
-        # Calculate rotation angle for character (perpendicular to circle)
-        char_angle = angle + math.pi/2
-        
-        # For simplicity, we'll draw characters without rotation
-        # In a more advanced version, you'd rotate each character
-        try:
-            # Try to center the character
-            char_bbox = draw.textbbox((0, 0), char, font=font)
-            char_width = char_bbox[2] - char_bbox[0]
-            char_height = char_bbox[3] - char_bbox[1]
-            
-            char_x = x - char_width // 2
-            char_y = y - char_height // 2
-            
-            draw.text((char_x, char_y), char, fill='white', font=font)
-        except:
-            # Fallback positioning
-            draw.text((x-font_size//4, y-font_size//4), char, fill='white', font=font)
+        # Only draw characters that are within image bounds
+        if 0 <= x <= width and 0 <= y <= height:
+            try:
+                # Try to center the character
+                char_bbox = draw.textbbox((0, 0), char, font=font)
+                char_width = char_bbox[2] - char_bbox[0]
+                char_height = char_bbox[3] - char_bbox[1]
+                
+                char_x = x - char_width // 2
+                char_y = y - char_height // 2
+                
+                draw.text((char_x, char_y), char, fill='white', font=font)
+            except:
+                # Fallback positioning
+                draw.text((x-font_size//4, y-font_size//4), char, fill='white', font=font)
     
     # Apply the overlay
     img_with_watermark = Image.alpha_composite(img_with_watermark, overlay)
