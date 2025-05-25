@@ -88,7 +88,7 @@ def add_circular_watermark(image: Image.Image, text: str = "I support AMIT Maury
 
 def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya") -> Image.Image:
     """
-    Add a LinkedIn-style circular watermark exactly like #OpenToWork
+    Add a LinkedIn-style circular watermark exactly like #OpenToWork - small ring in corner
     """
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
@@ -100,39 +100,36 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
-    # Circle parameters - positioned in bottom right like LinkedIn
-    circle_size = min(width, height) // 5  # Smaller, more professional size
-    margin = 20
+    # Circle parameters - SMALL ring in bottom right corner like LinkedIn
+    circle_size = min(width, height) // 8  # Much smaller - like LinkedIn
+    margin = 15
     circle_x = width - circle_size - margin
     circle_y = height - circle_size - margin
     
     # LinkedIn exact green color
-    linkedin_green = (25, 135, 84)  # LinkedIn's exact green
-    ring_width = 6
+    linkedin_green = (25, 135, 84)
+    ring_width = 4  # Thinner ring
     
-    # Draw the green ring border (not filled circle)
-    # Outer circle
+    # Draw ONLY the green ring border (no fill)
     draw.ellipse([circle_x, circle_y, circle_x + circle_size, circle_y + circle_size], 
                 outline=linkedin_green, width=ring_width)
     
-    # Inner transparent/white area - no fill, just the ring
-    inner_size = circle_size - (ring_width * 2)
-    inner_x = circle_x + ring_width
-    inner_y = circle_y + ring_width
+    # Add very light white background inside for text visibility
+    inner_margin = ring_width
+    inner_size = circle_size - (inner_margin * 2)
+    inner_x = circle_x + inner_margin
+    inner_y = circle_y + inner_margin
     
-    # Add very subtle white background for text readability
     draw.ellipse([inner_x, inner_y, inner_x + inner_size, inner_y + inner_size], 
-                fill=(255, 255, 255, 50))  # Very transparent white
+                fill=(255, 255, 255, 180))  # Light white background
     
-    # Font handling
+    # Font for small text
     try:
-        font_size = max(8, circle_size // 15)  # Smaller font for professional look
+        font_size = max(6, circle_size // 20)  # Very small font
         font_paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/Windows/Fonts/arial.ttf"
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
         ]
         
         font = None
@@ -149,64 +146,47 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     except:
         font = ImageFont.load_default()
     
-    # Text positioning - curved around the circle like LinkedIn
+    # Simple text layout - just center the text in the small circle
     center_x = circle_x + circle_size // 2
     center_y = circle_y + circle_size // 2
-    text_radius = (circle_size // 2) - 15  # Distance from center for text
     
-    # Split text for LinkedIn-style layout
+    # Format text to fit in small circle
     if "support" in text.lower() and "amit" in text.lower():
-        # Create the curved text effect like LinkedIn
-        upper_text = "I SUPPORT"
-        lower_text = "AMIT MAURYA"
-        
-        # Draw upper curved text
-        angle_step = math.pi / len(upper_text)
-        start_angle = -math.pi/2 - (len(upper_text) * angle_step / 2)
-        
-        for i, char in enumerate(upper_text):
-            angle = start_angle + i * angle_step
-            x = center_x + text_radius * math.cos(angle)
-            y = center_y + text_radius * math.sin(angle) - 10
-            
-            # Rotate character slightly for curve effect
-            try:
-                draw.text((x, y), char, fill=linkedin_green, font=font, anchor='mm')
-            except:
-                draw.text((x-font_size//4, y-font_size//4), char, fill=linkedin_green, font=font)
-        
-        # Draw lower curved text
-        angle_step = math.pi / len(lower_text)
-        start_angle = -math.pi/2 + math.pi/4
-        
-        for i, char in enumerate(lower_text):
-            angle = start_angle + i * angle_step
-            x = center_x + text_radius * math.cos(angle)
-            y = center_y + text_radius * math.sin(angle) + 10
-            
-            try:
-                draw.text((x, y), char, fill=linkedin_green, font=font, anchor='mm')
-            except:
-                draw.text((x-font_size//4, y-font_size//4), char, fill=linkedin_green, font=font)
-    
+        lines = ["I support", "AMIT Maurya"]
     else:
-        # Fallback for other text - simple centered layout
-        lines = text.split()
-        line_height = font_size + 2
-        total_height = len(lines) * line_height
-        start_y = center_y - total_height // 2
+        # Split long text into multiple lines
+        words = text.split()
+        lines = []
+        current_line = []
         
-        for i, line in enumerate(lines):
-            try:
-                bbox = draw.textbbox((0, 0), line, font=font)
-                text_width = bbox[2] - bbox[0]
-            except:
-                text_width = len(line) * (font_size // 2)
-                
-            text_x = center_x - text_width // 2
-            text_y = start_y + i * line_height
+        for word in words:
+            if len(' '.join(current_line + [word])) <= 8:  # Short lines for small circle
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+    
+    # Draw text in center of small circle
+    line_height = font_size + 1
+    total_height = len(lines) * line_height
+    start_y = center_y - total_height // 2
+    
+    for i, line in enumerate(lines):
+        try:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_width = bbox[2] - bbox[0]
+        except:
+            text_width = len(line) * (font_size // 2)
             
-            draw.text((text_x, text_y), line, fill=linkedin_green, font=font)
+        text_x = center_x - text_width // 2
+        text_y = start_y + i * line_height
+        
+        # Draw text in LinkedIn green
+        draw.text((text_x, text_y), line, fill=linkedin_green, font=font)
     
     # Composite
     img_with_watermark = Image.alpha_composite(img_with_watermark, overlay)
