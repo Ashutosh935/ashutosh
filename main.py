@@ -60,43 +60,81 @@ def detect_face_opencv_style(image: Image.Image):
                     # Feature 2: Horizontal symmetry (faces are roughly symmetric)
                     left_half = face_region[:, :face_size//2]
                     right_half = face_region[:, face_size//2:]
+                    
+                    # Ensure both halves have the same shape
+                    min_width = min(left_half.shape[1], right_half.shape[1])
+                    left_half = left_half[:, :min_width]
+                    right_half = right_half[:, :min_width]
                     right_flipped = np.fliplr(right_half)
                     
-                    if left_half.shape == right_flipped.shape:
-                        # Calculate correlation between left and right halves
-                        correlation = np.corrcoef(left_half.flatten(), right_flipped.flatten())[0,1]
-                        if not np.isnan(correlation) and correlation > 0.3:
-                            face_score += 3
+                    if left_half.shape == right_flipped.shape and left_half.size > 0:
+                        try:
+                            # Calculate correlation between left and right halves
+                            correlation = np.corrcoef(left_half.flatten(), right_flipped.flatten())[0,1]
+                            if not np.isnan(correlation) and correlation > 0.3:
+                                face_score += 3
+                        except:
+                            # Skip correlation if it fails
+                            pass
                     
                     # Feature 3: Face oval detection (edges should form oval-like pattern)
-                    # Apply edge detection
-                    edges = np.abs(np.diff(face_region, axis=0)) + np.abs(np.diff(face_region, axis=1))
-                    
-                    # Check for oval-like edge distribution
-                    center_x, center_y = face_size//2, face_size//2
-                    edge_density_at_center = 0
-                    edge_density_at_border = 0
-                    
-                    # Count edges at center vs border
-                    for dy in range(-face_size//4, face_size//4):
-                        for dx in range(-face_size//4, face_size//4):
-                            cy, cx = center_y + dy, center_x + dx
-                            if 0 <= cy < edges.shape[0] and 0 <= cx < edges.shape[1]:
-                                edge_density_at_center += edges[cy, cx]
-                    
-                    # Border edge density
-                    border_width = 3
-                    border_pixels = (face_region[:border_width, :].flatten().tolist() + 
-                                   face_region[-border_width:, :].flatten().tolist() +
-                                   face_region[:, :border_width].flatten().tolist() + 
-                                   face_region[:, -border_width:].flatten().tolist())
-                    
-                    if len(border_pixels) > 0:
-                        edge_density_at_border = np.std(border_pixels)
-                    
-                    # Faces typically have more variation at center than border
-                    if edge_density_at_center > edge_density_at_border * 0.5:
-                        face_score += 1
+                    # Apply edge detection with proper bounds checking
+                    if face_region.shape[0] > 1 and face_region.shape[1] > 1:
+                        try:
+                            # Calculate gradients safely
+                            grad_y = np.abs(np.diff(face_region, axis=0))
+                            grad_x = np.abs(np.diff(face_region, axis=1))
+                            
+                            # Ensure compatible shapes for addition
+                            min_h = min(grad_y.shape[0], grad_x.shape[0])
+                            min_w = min(grad_y.shape[1], grad_x.shape[1])
+                            
+                            if min_h > 0 and min_w > 0:
+                                edges = grad_y[:min_h, :min_w] + grad_x[:min_h, :min_w]
+                                
+                                # Check for oval-like edge distribution
+                                center_x, center_y = face_size//2, face_size//2
+                                edge_density_at_center = 0
+                                
+                                # Count edges at center region safely
+                                center_region_size = max(1, face_size//8)
+                                y_start = max(0, center_y - center_region_size)
+                                y_end = min(edges.shape[0], center_y + center_region_size)
+                                x_start = max(0, center_x - center_region_size)
+                                x_end = min(edges.shape[1], center_x + center_region_size)
+                                
+                                if y_end > y_start and x_end > x_start:
+                                    center_region = edges[y_start:y_end, x_start:x_end]
+                                    edge_density_at_center = np.mean(center_region)
+                                    
+                                    # Border edge density
+                                    border_width = max(1, min(3, edges.shape[0]//10, edges.shape[1]//10))
+                                    border_regions = []
+                                    
+                                    # Top and bottom borders
+                                    if edges.shape[0] > border_width * 2:
+                                        border_regions.extend([
+                                            edges[:border_width, :].flatten(),
+                                            edges[-border_width:, :].flatten()
+                                        ])
+                                    
+                                    # Left and right borders  
+                                    if edges.shape[1] > border_width * 2:
+                                        border_regions.extend([
+                                            edges[:, :border_width].flatten(),
+                                            edges[:, -border_width:].flatten()
+                                        ])
+                                    
+                                    if border_regions:
+                                        all_border_pixels = np.concatenate(border_regions)
+                                        edge_density_at_border = np.std(all_border_pixels)
+                                        
+                                        # Faces typically have more variation at center than border
+                                        if edge_density_at_center > edge_density_at_border * 0.5:
+                                            face_score += 1
+                        except:
+                            # Skip edge detection if it fails
+                            pass
                     
                     # Feature 4: Brightness distribution (faces are usually well-lit)
                     brightness_avg = np.mean(face_region)
@@ -107,18 +145,27 @@ def detect_face_opencv_style(image: Image.Image):
                         face_score += 2
                     
                     # Feature 5: Skin tone detection
-                    if face_region.size > 0:
-                        # Extract corresponding color region
-                        color_region = img_array[y:y+face_size, x:x+face_size]
-                        avg_r = np.mean(color_region[:,:,0])
-                        avg_g = np.mean(color_region[:,:,1])
-                        avg_b = np.mean(color_region[:,:,2])
-                        
-                        # Skin tone characteristics
-                        if (avg_r > 60 and avg_g > 40 and avg_b > 20 and 
-                            avg_r > avg_g and avg_r > avg_b and
-                            abs(avg_r - avg_g) > 15):
-                            face_score += 3
+                    try:
+                        if face_region.size > 0:
+                            # Extract corresponding color region safely
+                            y_end = min(y + face_size, img_array.shape[0])
+                            x_end = min(x + face_size, img_array.shape[1])
+                            
+                            color_region = img_array[y:y_end, x:x_end]
+                            
+                            if color_region.size > 0 and len(color_region.shape) == 3:
+                                avg_r = np.mean(color_region[:,:,0])
+                                avg_g = np.mean(color_region[:,:,1])
+                                avg_b = np.mean(color_region[:,:,2])
+                                
+                                # Skin tone characteristics
+                                if (avg_r > 60 and avg_g > 40 and avg_b > 20 and 
+                                    avg_r > avg_g and avg_r > avg_b and
+                                    abs(avg_r - avg_g) > 15):
+                                    face_score += 3
+                    except:
+                        # Skip skin tone detection if it fails
+                        pass
                     
                     # Minimum score threshold (like OpenCV minNeighbors)
                     if face_score >= 6:
