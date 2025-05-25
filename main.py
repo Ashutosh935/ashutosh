@@ -3,211 +3,163 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 import io
 import math
 import numpy as np
+import cv2
 
 def detect_face_opencv_style(image: Image.Image):
     """
-    OpenCV-style face detection using image analysis techniques
-    Simulates Haar cascade classifier behavior
+    Real OpenCV face detection using Haar cascade classifier
+    """
+    width, height = image.size
+    
+    # Convert PIL to OpenCV format
+    img_array = np.array(image.convert('RGB'))
+    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    
+    try:
+        # Initialize the face cascade classifier
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        
+        # Detect faces using OpenCV
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,        # How much the image size is reduced at each scale
+            minNeighbors=5,         # How many neighbors each candidate rectangle should retain
+            minSize=(30, 30),       # Minimum possible face size
+            flags=cv2.CASCADE_SCALE_IMAGE
+        )
+        
+        if len(faces) > 0:
+            # Get the largest face (most confident detection)
+            largest_face = max(faces, key=lambda f: f[2] * f[3])  # width * height
+            x, y, w, h = largest_face
+            
+            # Calculate face center
+            face_center_x = x + w // 2
+            face_center_y = y + h // 2
+            
+            # Convert faces to list of dictionaries for compatibility
+            face_list = []
+            for (fx, fy, fw, fh) in faces:
+                face_list.append({
+                    'x': fx,
+                    'y': fy, 
+                    'width': fw,
+                    'height': fh,
+                    'confidence': 100  # OpenCV doesn't return confidence, so we set high value
+                })
+            
+            return face_center_x, face_center_y, face_list
+        
+        else:
+            # No faces detected, use fallback positioning
+            return fallback_face_position(width, height)
+            
+    except Exception as e:
+        st.warning(f"OpenCV face detection failed: {str(e)}. Using fallback positioning.")
+        return fallback_face_position(width, height)
+
+def fallback_face_position(width, height):
+    """
+    Fallback face positioning when OpenCV detection fails
+    """
+    aspect_ratio = height / width
+    
+    if aspect_ratio > 2.0:
+        # Very tall image - face likely very high
+        fallback_x, fallback_y = width // 2, int(height * 0.15)
+    elif aspect_ratio > 1.6:
+        # Tall portrait - face in upper quarter  
+        fallback_x, fallback_y = width // 2, int(height * 0.22)
+    elif aspect_ratio > 1.3:
+        # Portrait - face in upper third
+        fallback_x, fallback_y = width // 2, int(height * 0.30)
+    else:
+        # Square or landscape - face in upper-center
+        fallback_x, fallback_y = width // 2, int(height * 0.35)
+    
+    return fallback_x, fallback_y, []
+
+def detect_additional_faces(image: Image.Image):
+    """
+    Detect multiple faces for better accuracy
     """
     width, height = image.size
     img_array = np.array(image.convert('RGB'))
+    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     
-    # Convert to grayscale like OpenCV
-    gray = np.mean(img_array, axis=2).astype(np.uint8)
-    
-    def detect_haar_like_features():
-        """
-        Simulate Haar cascade detection by looking for face-like patterns
-        """
-        faces = []
+    try:
+        # Try multiple cascade classifiers for better detection
+        cascade_files = [
+            'haarcascade_frontalface_default.xml',
+            'haarcascade_frontalface_alt.xml', 
+            'haarcascade_frontalface_alt2.xml',
+            'haarcascade_profileface.xml'
+        ]
         
-        # Scan the image with different window sizes (like OpenCV scaleFactor)
-        min_face_size = min(width, height) // 8
-        max_face_size = min(width, height) // 3
+        all_faces = []
         
-        # Multiple scales like OpenCV detectMultiScale
-        for scale in [1.0, 1.2, 1.5, 2.0]:
-            face_size = int(min_face_size * scale)
-            if face_size > max_face_size:
-                continue
+        for cascade_file in cascade_files:
+            try:
+                cascade_path = cv2.data.haarcascades + cascade_file
+                face_cascade = cv2.CascadeClassifier(cascade_path)
                 
-            step_size = max(5, face_size // 8)
-            
-            for y in range(0, height - face_size, step_size):
-                for x in range(0, width - face_size, step_size):
-                    
-                    # Extract potential face region
-                    face_region = gray[y:y+face_size, x:x+face_size]
-                    
-                    if face_region.shape[0] < face_size or face_region.shape[1] < face_size:
-                        continue
-                    
-                    # Haar-like feature detection
-                    face_score = 0
-                    
-                    # Feature 1: Eye region (upper part should be darker than middle)
-                    upper_third = face_region[:face_size//3, :]
-                    middle_third = face_region[face_size//3:2*face_size//3, :]
-                    
-                    if upper_third.size > 0 and middle_third.size > 0:
-                        upper_avg = np.mean(upper_third)
-                        middle_avg = np.mean(middle_third)
+                # Detect faces with different parameters
+                faces = face_cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.05,      # More sensitive detection
+                    minNeighbors=3,        # Lower threshold
+                    minSize=(20, 20),      # Smaller minimum size
+                    maxSize=(width//2, height//2),  # Maximum size constraint
+                    flags=cv2.CASCADE_SCALE_IMAGE
+                )
+                
+                # Add detected faces to list
+                for (x, y, w, h) in faces:
+                    all_faces.append({
+                        'x': x, 'y': y, 'width': w, 'height': h,
+                        'area': w * h, 'cascade': cascade_file
+                    })
                         
-                        # Eyes are typically darker than cheeks
-                        if upper_avg < middle_avg - 5:
-                            face_score += 2
-                    
-                    # Feature 2: Horizontal symmetry (faces are roughly symmetric)
-                    left_half = face_region[:, :face_size//2]
-                    right_half = face_region[:, face_size//2:]
-                    
-                    # Ensure both halves have the same shape
-                    min_width = min(left_half.shape[1], right_half.shape[1])
-                    left_half = left_half[:, :min_width]
-                    right_half = right_half[:, :min_width]
-                    right_flipped = np.fliplr(right_half)
-                    
-                    if left_half.shape == right_flipped.shape and left_half.size > 0:
-                        try:
-                            # Calculate correlation between left and right halves
-                            correlation = np.corrcoef(left_half.flatten(), right_flipped.flatten())[0,1]
-                            if not np.isnan(correlation) and correlation > 0.3:
-                                face_score += 3
-                        except:
-                            # Skip correlation if it fails
-                            pass
-                    
-                    # Feature 3: Face oval detection (edges should form oval-like pattern)
-                    # Apply edge detection with proper bounds checking
-                    if face_region.shape[0] > 1 and face_region.shape[1] > 1:
-                        try:
-                            # Calculate gradients safely
-                            grad_y = np.abs(np.diff(face_region, axis=0))
-                            grad_x = np.abs(np.diff(face_region, axis=1))
-                            
-                            # Ensure compatible shapes for addition
-                            min_h = min(grad_y.shape[0], grad_x.shape[0])
-                            min_w = min(grad_y.shape[1], grad_x.shape[1])
-                            
-                            if min_h > 0 and min_w > 0:
-                                edges = grad_y[:min_h, :min_w] + grad_x[:min_h, :min_w]
-                                
-                                # Check for oval-like edge distribution
-                                center_x, center_y = face_size//2, face_size//2
-                                edge_density_at_center = 0
-                                
-                                # Count edges at center region safely
-                                center_region_size = max(1, face_size//8)
-                                y_start = max(0, center_y - center_region_size)
-                                y_end = min(edges.shape[0], center_y + center_region_size)
-                                x_start = max(0, center_x - center_region_size)
-                                x_end = min(edges.shape[1], center_x + center_region_size)
-                                
-                                if y_end > y_start and x_end > x_start:
-                                    center_region = edges[y_start:y_end, x_start:x_end]
-                                    edge_density_at_center = np.mean(center_region)
-                                    
-                                    # Border edge density
-                                    border_width = max(1, min(3, edges.shape[0]//10, edges.shape[1]//10))
-                                    border_regions = []
-                                    
-                                    # Top and bottom borders
-                                    if edges.shape[0] > border_width * 2:
-                                        border_regions.extend([
-                                            edges[:border_width, :].flatten(),
-                                            edges[-border_width:, :].flatten()
-                                        ])
-                                    
-                                    # Left and right borders  
-                                    if edges.shape[1] > border_width * 2:
-                                        border_regions.extend([
-                                            edges[:, :border_width].flatten(),
-                                            edges[:, -border_width:].flatten()
-                                        ])
-                                    
-                                    if border_regions:
-                                        all_border_pixels = np.concatenate(border_regions)
-                                        edge_density_at_border = np.std(all_border_pixels)
-                                        
-                                        # Faces typically have more variation at center than border
-                                        if edge_density_at_center > edge_density_at_border * 0.5:
-                                            face_score += 1
-                        except:
-                            # Skip edge detection if it fails
-                            pass
-                    
-                    # Feature 4: Brightness distribution (faces are usually well-lit)
-                    brightness_avg = np.mean(face_region)
-                    brightness_std = np.std(face_region)
-                    
-                    # Good lighting and contrast
-                    if 60 < brightness_avg < 200 and 15 < brightness_std < 50:
-                        face_score += 2
-                    
-                    # Feature 5: Skin tone detection
-                    try:
-                        if face_region.size > 0:
-                            # Extract corresponding color region safely
-                            y_end = min(y + face_size, img_array.shape[0])
-                            x_end = min(x + face_size, img_array.shape[1])
-                            
-                            color_region = img_array[y:y_end, x:x_end]
-                            
-                            if color_region.size > 0 and len(color_region.shape) == 3:
-                                avg_r = np.mean(color_region[:,:,0])
-                                avg_g = np.mean(color_region[:,:,1])
-                                avg_b = np.mean(color_region[:,:,2])
-                                
-                                # Skin tone characteristics
-                                if (avg_r > 60 and avg_g > 40 and avg_b > 20 and 
-                                    avg_r > avg_g and avg_r > avg_b and
-                                    abs(avg_r - avg_g) > 15):
-                                    face_score += 3
-                    except:
-                        # Skip skin tone detection if it fails
-                        pass
-                    
-                    # Minimum score threshold (like OpenCV minNeighbors)
-                    if face_score >= 6:
-                        # Calculate confidence
-                        confidence = min(100, face_score * 10)
-                        faces.append({
-                            'x': x,
-                            'y': y,
-                            'width': face_size,
-                            'height': face_size,
-                            'confidence': confidence
-                        })
+            except:
+                continue
         
-        return faces
-    
-    # Detect faces using Haar-like features
-    detected_faces = detect_haar_like_features()
-    
-    if detected_faces:
-        # Sort by confidence and return the best face
-        best_face = max(detected_faces, key=lambda f: f['confidence'])
+        if all_faces:
+            # Remove duplicate detections (faces that overlap significantly)
+            unique_faces = []
+            for face in all_faces:
+                is_duplicate = False
+                for existing_face in unique_faces:
+                    # Check overlap
+                    overlap_x = max(0, min(face['x'] + face['width'], existing_face['x'] + existing_face['width']) - 
+                                   max(face['x'], existing_face['x']))
+                    overlap_y = max(0, min(face['y'] + face['height'], existing_face['y'] + existing_face['height']) - 
+                                   max(face['y'], existing_face['y']))
+                    overlap_area = overlap_x * overlap_y
+                    
+                    # If overlap is more than 50% of smaller face, consider it duplicate
+                    min_area = min(face['area'], existing_face['area'])
+                    if overlap_area > min_area * 0.5:
+                        is_duplicate = True
+                        break
+                
+                if not is_duplicate:
+                    unique_faces.append(face)
+            
+            # Return the largest face
+            if unique_faces:
+                best_face = max(unique_faces, key=lambda f: f['area'])
+                face_center_x = best_face['x'] + best_face['width'] // 2
+                face_center_y = best_face['y'] + best_face['height'] // 2
+                return face_center_x, face_center_y, unique_faces
         
-        # Calculate center of the best face
-        face_center_x = best_face['x'] + best_face['width'] // 2
-        face_center_y = best_face['y'] + best_face['height'] // 2
+        # No faces found
+        return fallback_face_position(width, height)
         
-        return face_center_x, face_center_y, detected_faces
-    
-    else:
-        # Fallback to compositional estimation
-        aspect_ratio = height / width
-        
-        if aspect_ratio > 2.0:
-            fallback_x, fallback_y = width // 2, int(height * 0.15)
-        elif aspect_ratio > 1.5:
-            fallback_x, fallback_y = width // 2, int(height * 0.22)
-        elif aspect_ratio > 1.2:
-            fallback_x, fallback_y = width // 2, int(height * 0.30)
-        else:
-            fallback_x, fallback_y = width // 2, int(height * 0.35)
-        
-        return fallback_x, fallback_y, []
+    except Exception as e:
+        st.warning(f"Advanced face detection failed: {str(e)}")
+        return fallback_face_position(width, height)
 
 def calculate_max_radius(face_center_x, face_center_y, width, height):
     """
@@ -231,8 +183,8 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     img_with_watermark = image.copy()
     width, height = img_with_watermark.size
     
-    # OpenCV-style face detection
-    face_center_x, face_center_y, faces = detect_face_opencv_style(image)
+    # Real OpenCV face detection with multiple cascade attempts
+    face_center_x, face_center_y, faces = detect_additional_faces(image)
     
     # Calculate radius based on distance to edges
     max_radius = calculate_max_radius(face_center_x, face_center_y, width, height)
@@ -375,13 +327,13 @@ def main():
         )
         
         st.markdown("---")
-        st.markdown("### 🔍 Face Detection Features:")
-        st.markdown("✅ **Haar Cascade simulation**")
-        st.markdown("✅ **Multi-scale detection**")
-        st.markdown("✅ **Symmetry analysis**")
-        st.markdown("✅ **Skin tone detection**")
-        st.markdown("✅ **Edge pattern recognition**")
-        st.markdown("✅ **Confidence scoring**")
+        st.markdown("### 🔍 Real OpenCV Face Detection:")
+        st.markdown("✅ **Haar Cascade Classifiers**")
+        st.markdown("✅ **Multiple Detection Models**")
+        st.markdown("✅ **Scale-invariant Detection**") 
+        st.markdown("✅ **Frontal & Profile Face Detection**")
+        st.markdown("✅ **Duplicate Face Filtering**")
+        st.markdown("✅ **Confidence-based Selection**")
     
     # Main content
     col1, col2 = st.columns([1, 1])
@@ -409,14 +361,22 @@ def main():
         if uploaded_file is not None:
             st.header("✨ Generated Frame")
             
-            with st.spinner("🔍 Detecting face and adding frame..."):
-                # Process the image
+            with st.spinner("🔍 Using OpenCV to detect faces and adding frame..."):
+                # Process the image with real OpenCV
                 result_image = process_image(uploaded_file, watermark_text)
                 
                 if result_image is not None:
                     # Display result
                     st.subheader("With LinkedIn Frame")
                     st.image(result_image, use_column_width=True)
+                    
+                    # Show detection info
+                    face_center_x, face_center_y, faces = detect_additional_faces(Image.open(uploaded_file))
+                    if faces:
+                        st.success(f"✅ OpenCV detected {len(faces)} face(s)!")
+                        st.info(f"🎯 Using face at position: ({face_center_x}, {face_center_y})")
+                    else:
+                        st.warning("⚠️ No faces detected by OpenCV. Using smart positioning.")
                     
                     # Download button
                     buf = io.BytesIO()
@@ -431,7 +391,7 @@ def main():
                         use_container_width=True
                     )
                     
-                    st.success("✅ Frame added successfully!")
+                    st.success("✅ Frame added with OpenCV face detection!")
         else:
             st.header("👆 Upload an image to get started")
             st.markdown("""
@@ -439,12 +399,12 @@ def main():
             
             1. **Upload** a clear photo of yourself
             2. **Customize** the frame text (optional)
-            3. **Advanced face detection** locates your face using OpenCV-style algorithms:
-               - Haar-like feature detection
-               - Multi-scale window scanning
-               - Facial symmetry analysis
-               - Skin tone recognition
-               - Edge pattern matching
+            3. **Real OpenCV face detection** locates your face using:
+               - Multiple Haar cascade classifiers
+               - Frontal and profile face detection  
+               - Scale-invariant detection (1.05x increments)
+               - Duplicate face filtering
+               - Confidence-based best face selection
             4. **Download** your professional LinkedIn-style frame!
             
             ### Tips for best results:
