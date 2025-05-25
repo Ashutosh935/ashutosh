@@ -174,43 +174,44 @@ def calculate_smart_radius(face_center_x, face_center_y, width, height):
     # Maximum possible radius is the minimum distance to any edge
     max_possible_radius = min(distance_to_left, distance_to_right, distance_to_top, distance_to_bottom)
     
-    # Ensure we have a reasonable margin (subtract 5-10 pixels for safety)
-    safe_margin = min(10, max_possible_radius // 20)  # 5% margin or 10px, whichever is smaller
+    # Use minimal margin (just 2-3 pixels for safety)
+    safe_margin = max(2, min(5, max_possible_radius // 50))  # Very small margin
     max_safe_radius = max_possible_radius - safe_margin
     
     # Ensure minimum usable size
-    min_radius = 30  # Minimum radius for visibility
+    min_radius = 20  # Smaller minimum to allow bigger circles
     max_safe_radius = max(min_radius, max_safe_radius)
     
     return max_safe_radius
 
 def calculate_optimal_circle_sizes(face_center_x, face_center_y, width, height):
     """
-    Calculate optimal inner and outer circle sizes based on available space
+    Calculate optimal inner and outer circle sizes using MAXIMUM available space
     """
     # Get maximum safe radius
     max_radius = calculate_smart_radius(face_center_x, face_center_y, width, height)
     
-    # Calculate outer radius (85% of maximum available space)
-    outer_radius = int(max_radius * 0.85)
+    # Use much higher percentages to get bigger circles
+    # Outer radius: 95% of maximum available space (much bigger!)
+    outer_radius = int(max_radius * 0.95)
     
-    # Calculate inner radius (65% of maximum available space)  
-    inner_radius = int(max_radius * 0.65)
+    # Inner radius: 75% of maximum available space (much bigger!)
+    inner_radius = int(max_radius * 0.75)
     
-    # Ensure minimum sizes for visibility
-    outer_radius = max(50, outer_radius)
-    inner_radius = max(35, inner_radius)
+    # Ensure minimum sizes for visibility but keep them small
+    outer_radius = max(40, outer_radius)
+    inner_radius = max(25, inner_radius)
     
-    # Ensure adequate space for text (minimum 20px ring width)
-    min_ring_width = 20
+    # Ensure adequate space for text (minimum 15px ring width)
+    min_ring_width = 15
     if outer_radius - inner_radius < min_ring_width:
         # Adjust inner radius to maintain minimum ring width
-        inner_radius = max(20, outer_radius - min_ring_width)
+        inner_radius = max(15, outer_radius - min_ring_width)
     
     # Final validation - ensure circles fit within bounds
     if outer_radius > max_radius:
-        outer_radius = max_radius
-        inner_radius = max(15, outer_radius - min_ring_width)
+        outer_radius = max_radius - 2  # Just 2px margin
+        inner_radius = max(10, outer_radius - min_ring_width)
     
     return inner_radius, outer_radius, max_radius
 
