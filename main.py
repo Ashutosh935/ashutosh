@@ -161,17 +161,72 @@ def detect_additional_faces(image: Image.Image):
         st.warning(f"Advanced face detection failed: {str(e)}")
         return fallback_face_position(width, height)
 
-def calculate_max_radius(face_center_x, face_center_y, width, height):
+def calculate_smart_radius(face_center_x, face_center_y, width, height):
     """
-    Calculate maximum possible radius based on distance to all 4 edges
+    Smart radius calculation - maximum radius that fits within image bounds
     """
+    # Calculate distance from face center to each edge
     distance_to_left = face_center_x
     distance_to_right = width - face_center_x
     distance_to_top = face_center_y
     distance_to_bottom = height - face_center_y
     
-    max_radius = min(distance_to_left, distance_to_right, distance_to_top, distance_to_bottom)
-    return max_radius
+    # Maximum possible radius is the minimum distance to any edge
+    max_possible_radius = min(distance_to_left, distance_to_right, distance_to_top, distance_to_bottom)
+    
+    # Ensure we have a reasonable margin (subtract 5-10 pixels for safety)
+    safe_margin = min(10, max_possible_radius // 20)  # 5% margin or 10px, whichever is smaller
+    max_safe_radius = max_possible_radius - safe_margin
+    
+    # Ensure minimum usable size
+    min_radius = 30  # Minimum radius for visibility
+    max_safe_radius = max(min_radius, max_safe_radius)
+    
+    return max_safe_radius
+
+def calculate_optimal_circle_sizes(face_center_x, face_center_y, width, height):
+    """
+    Calculate optimal inner and outer circle sizes based on available space
+    """
+    # Get maximum safe radius
+    max_radius = calculate_smart_radius(face_center_x, face_center_y, width, height)
+    
+    # Calculate outer radius (85% of maximum available space)
+    outer_radius = int(max_radius * 0.85)
+    
+    # Calculate inner radius (65% of maximum available space)  
+    inner_radius = int(max_radius * 0.65)
+    
+    # Ensure minimum sizes for visibility
+    outer_radius = max(50, outer_radius)
+    inner_radius = max(35, inner_radius)
+    
+    # Ensure adequate space for text (minimum 20px ring width)
+    min_ring_width = 20
+    if outer_radius - inner_radius < min_ring_width:
+        # Adjust inner radius to maintain minimum ring width
+        inner_radius = max(20, outer_radius - min_ring_width)
+    
+    # Final validation - ensure circles fit within bounds
+    if outer_radius > max_radius:
+        outer_radius = max_radius
+        inner_radius = max(15, outer_radius - min_ring_width)
+    
+    return inner_radius, outer_radius, max_radius
+
+def validate_circle_bounds(face_center_x, face_center_y, radius, width, height):
+    """
+    Validate that circle with given radius fits within image bounds
+    """
+    left_bound = face_center_x - radius
+    right_bound = face_center_x + radius
+    top_bound = face_center_y - radius
+    bottom_bound = face_center_y + radius
+    
+    fits_horizontally = left_bound >= 0 and right_bound <= width
+    fits_vertically = top_bound >= 0 and bottom_bound <= height
+    
+    return fits_horizontally and fits_vertically
 
 def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya") -> Image.Image:
     """
@@ -186,20 +241,25 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     # Real OpenCV face detection with multiple cascade attempts
     face_center_x, face_center_y, faces = detect_additional_faces(image)
     
-    # Calculate radius based on distance to edges
-    max_radius = calculate_max_radius(face_center_x, face_center_y, width, height)
+    # Smart radius calculation based on distance to edges
+    inner_radius, outer_radius, max_available_radius = calculate_optimal_circle_sizes(
+        face_center_x, face_center_y, width, height
+    )
     
-    # Use conservative percentages for better fit
-    outer_radius = int(max_radius * 0.75)  # 75% of max possible
-    inner_radius = int(max_radius * 0.55)  # 55% of max possible
+    # Validate that circles fit within image bounds
+    if not validate_circle_bounds(face_center_x, face_center_y, outer_radius, width, height):
+        # Recalculate with more conservative sizing
+        max_safe = calculate_smart_radius(face_center_x, face_center_y, width, height)
+        outer_radius = int(max_safe * 0.75)  # Even more conservative
+        inner_radius = int(max_safe * 0.55)
+        outer_radius = max(40, outer_radius)
+        inner_radius = max(25, inner_radius)
     
-    # Minimum sizes
-    outer_radius = max(60, outer_radius)
-    inner_radius = max(40, inner_radius)
-    
-    # Ensure adequate text space
-    if outer_radius - inner_radius < 20:
-        inner_radius = max(25, outer_radius - 30)
+    # Final ring width check
+    ring_width = outer_radius - inner_radius
+    if ring_width < 15:
+        # Ensure minimum text space
+        inner_radius = max(15, outer_radius - 20)
     
     # Create overlay
     overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
@@ -332,8 +392,9 @@ def main():
         st.markdown("✅ **Multiple Detection Models**")
         st.markdown("✅ **Scale-invariant Detection**") 
         st.markdown("✅ **Frontal & Profile Face Detection**")
-        st.markdown("✅ **Duplicate Face Filtering**")
-        st.markdown("✅ **Confidence-based Selection**")
+        st.markdown("✅ **Smart Radius Calculation**")
+        st.markdown("✅ **Perfect Circle Fitting**")
+        st.markdown("✅ **Boundary Validation**")
     
     # Main content
     col1, col2 = st.columns([1, 1])
@@ -370,11 +431,26 @@ def main():
                     st.subheader("With LinkedIn Frame")
                     st.image(result_image, use_column_width=True)
                     
-                    # Show detection info
+                    # Show detection and sizing info
                     face_center_x, face_center_y, faces = detect_additional_faces(Image.open(uploaded_file))
                     if faces:
                         st.success(f"✅ OpenCV detected {len(faces)} face(s)!")
-                        st.info(f"🎯 Using face at position: ({face_center_x}, {face_center_y})")
+                        
+                        # Calculate and show radius info
+                        inner_r, outer_r, max_r = calculate_optimal_circle_sizes(
+                            face_center_x, face_center_y, original_image.width, original_image.height
+                        )
+                        
+                        st.info(f"🎯 Face center: ({face_center_x}, {face_center_y})")
+                        st.info(f"📏 Circle sizes - Inner: {inner_r}px, Outer: {outer_r}px (Max available: {max_r}px)")
+                        
+                        # Validate fit
+                        fits = validate_circle_bounds(face_center_x, face_center_y, outer_r, 
+                                                    original_image.width, original_image.height)
+                        if fits:
+                            st.success("✅ Circle fits perfectly within image bounds!")
+                        else:
+                            st.warning("⚠️ Using adjusted sizing for optimal fit.")
                     else:
                         st.warning("⚠️ No faces detected by OpenCV. Using smart positioning.")
                     
