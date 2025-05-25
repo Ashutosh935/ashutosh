@@ -86,9 +86,21 @@ def add_circular_watermark(image: Image.Image, text: str = "I support AMIT Maury
     
     return img_with_watermark
 
+def detect_face_center(image: Image.Image):
+    """
+    Simple face detection - finds the center area of the image as face center
+    For better results, you could integrate OpenCV face detection
+    """
+    width, height = image.size
+    # Simple assumption: face is in the center-upper area of image
+    face_center_x = width // 2
+    face_center_y = int(height * 0.4)  # Slightly above center for typical selfies
+    
+    return face_center_x, face_center_y
+
 def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya") -> Image.Image:
     """
-    Add a LinkedIn-style circular watermark exactly like #OpenToWork - small ring in corner
+    Add LinkedIn-style face frame with curved text between two circles
     """
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
@@ -96,36 +108,42 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
     img_with_watermark = image.copy()
     width, height = img_with_watermark.size
     
+    # Detect face center
+    face_center_x, face_center_y = detect_face_center(image)
+    
+    # Calculate circle radii based on image size
+    inner_radius = min(width, height) // 4  # Inner circle around face
+    outer_radius = inner_radius + 40        # Outer circle for text band
+    
     # Create overlay
     overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     
-    # Circle parameters - SMALL ring in bottom right corner like LinkedIn
-    circle_size = min(width, height) // 8  # Much smaller - like LinkedIn
-    margin = 15
-    circle_x = width - circle_size - margin
-    circle_y = height - circle_size - margin
-    
-    # LinkedIn exact green color
+    # LinkedIn green color
     linkedin_green = (25, 135, 84)
-    ring_width = 4  # Thinner ring
     
-    # Draw ONLY the green ring border (no fill)
-    draw.ellipse([circle_x, circle_y, circle_x + circle_size, circle_y + circle_size], 
-                outline=linkedin_green, width=ring_width)
+    # Draw the ring between inner and outer circles
+    # First draw outer circle (filled)
+    outer_bbox = [
+        face_center_x - outer_radius,
+        face_center_y - outer_radius,
+        face_center_x + outer_radius,
+        face_center_y + outer_radius
+    ]
+    draw.ellipse(outer_bbox, fill=linkedin_green + (200,))
     
-    # Add very light white background inside for text visibility
-    inner_margin = ring_width
-    inner_size = circle_size - (inner_margin * 2)
-    inner_x = circle_x + inner_margin
-    inner_y = circle_y + inner_margin
+    # Then draw inner circle (transparent) to create the ring effect
+    inner_bbox = [
+        face_center_x - inner_radius,
+        face_center_y - inner_radius,
+        face_center_x + inner_radius,
+        face_center_y + inner_radius
+    ]
+    draw.ellipse(inner_bbox, fill=(0, 0, 0, 0))  # Transparent inner circle
     
-    draw.ellipse([inner_x, inner_y, inner_x + inner_size, inner_y + inner_size], 
-                fill=(255, 255, 255, 180))  # Light white background
-    
-    # Font for small text
+    # Font setup for curved text
     try:
-        font_size = max(6, circle_size // 20)  # Very small font
+        font_size = max(12, (outer_radius - inner_radius) // 3)
         font_paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -144,51 +162,51 @@ def add_simple_watermark(image: Image.Image, text: str = "I support AMIT Maurya"
             font = ImageFont.load_default()
             
     except:
+        font_size = 12
         font = ImageFont.load_default()
     
-    # Simple text layout - just center the text in the small circle
-    center_x = circle_x + circle_size // 2
-    center_y = circle_y + circle_size // 2
+    # Add curved text between the circles
+    text_radius = (inner_radius + outer_radius) // 2  # Middle of the ring
     
-    # Format text to fit in small circle
+    # Format text like LinkedIn
     if "support" in text.lower() and "amit" in text.lower():
-        lines = ["I support", "AMIT Maurya"]
+        display_text = "#I SUPPORT AMIT MAURYA"
     else:
-        # Split long text into multiple lines
-        words = text.split()
-        lines = []
-        current_line = []
-        
-        for word in words:
-            if len(' '.join(current_line + [word])) <= 8:  # Short lines for small circle
-                current_line.append(word)
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                current_line = [word]
-        
-        if current_line:
-            lines.append(' '.join(current_line))
+        display_text = f"#{text.upper()}"
     
-    # Draw text in center of small circle
-    line_height = font_size + 1
-    total_height = len(lines) * line_height
-    start_y = center_y - total_height // 2
+    # Calculate text positioning around the circle
+    text_length = len(display_text)
+    angle_per_char = (2 * math.pi * 0.8) / text_length  # Use 80% of circle
+    start_angle = -math.pi * 0.4  # Start from left side
     
-    for i, line in enumerate(lines):
+    # Draw each character along the curved path
+    for i, char in enumerate(display_text):
+        angle = start_angle + i * angle_per_char
+        
+        # Calculate position
+        x = face_center_x + text_radius * math.cos(angle)
+        y = face_center_y + text_radius * math.sin(angle)
+        
+        # Calculate rotation angle for character (perpendicular to circle)
+        char_angle = angle + math.pi/2
+        
+        # For simplicity, we'll draw characters without rotation
+        # In a more advanced version, you'd rotate each character
         try:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            text_width = bbox[2] - bbox[0]
-        except:
-            text_width = len(line) * (font_size // 2)
+            # Try to center the character
+            char_bbox = draw.textbbox((0, 0), char, font=font)
+            char_width = char_bbox[2] - char_bbox[0]
+            char_height = char_bbox[3] - char_bbox[1]
             
-        text_x = center_x - text_width // 2
-        text_y = start_y + i * line_height
-        
-        # Draw text in LinkedIn green
-        draw.text((text_x, text_y), line, fill=linkedin_green, font=font)
+            char_x = x - char_width // 2
+            char_y = y - char_height // 2
+            
+            draw.text((char_x, char_y), char, fill='white', font=font)
+        except:
+            # Fallback positioning
+            draw.text((x-font_size//4, y-font_size//4), char, fill='white', font=font)
     
-    # Composite
+    # Apply the overlay
     img_with_watermark = Image.alpha_composite(img_with_watermark, overlay)
     return img_with_watermark
 
